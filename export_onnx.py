@@ -6,10 +6,11 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset
 
 from models.model_b import MobileNetStyleCNN
 from preprocessing.dataset import LABELS, MelSpectrogramDataset
+from train import split_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,20 +25,10 @@ def parse_args() -> argparse.Namespace:
 
 def build_test_loader(cache_dir: Path, seed: int, num_samples: int) -> DataLoader:
     dataset = MelSpectrogramDataset(cache_dir)
-    total = len(dataset)
-    train_len = int(total * 0.70)
-    val_len = int(total * 0.15)
-    test_len = total - train_len - val_len
-
-    generator = torch.Generator().manual_seed(seed)
-    _, _, test_set = random_split(dataset, [train_len, val_len, test_len], generator=generator)
-
-    sample_count = min(num_samples, len(test_set))
-    subset, _ = random_split(
-        test_set,
-        [sample_count, len(test_set) - sample_count],
-        generator=torch.Generator().manual_seed(seed + 1),
-    )
+    _, _, test_subset = split_dataset(dataset, seed)
+    test_indices = test_subset.indices
+    sample_count = min(num_samples, len(test_indices))
+    subset = Subset(dataset, test_indices[:sample_count])
 
     return DataLoader(subset, batch_size=1, shuffle=False)
 

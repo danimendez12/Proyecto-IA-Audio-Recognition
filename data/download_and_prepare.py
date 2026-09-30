@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import tarfile
+import urllib.request
 from pathlib import Path
-
-from torchaudio.datasets.utils import download_url, extract_archive
 
 DATASET_URL = "https://download.tensorflow.org/data/speech_commands_v0.02.tar.gz"
 ARCHIVE_NAME = "speech_commands_v0.02.tar.gz"
 TARGET_COMMANDS = ["yes", "no", "up", "down", "left", "right", "on", "off", "stop", "go"]
+SPLIT_FILES = ("validation_list.txt", "testing_list.txt")
 
 
 def download_speech_commands(raw_root: Path) -> Path:
@@ -16,13 +17,13 @@ def download_speech_commands(raw_root: Path) -> Path:
     archive_path = raw_root / ARCHIVE_NAME
 
     if not archive_path.exists():
-        download_url(DATASET_URL, str(raw_root), ARCHIVE_NAME)
+        urllib.request.urlretrieve(DATASET_URL, archive_path)
 
-    extracted_dir = raw_root / "speech_commands_v0.02"
-    if not extracted_dir.exists():
-        extract_archive(str(archive_path), str(raw_root))
+    if not all((raw_root / command).is_dir() for command in TARGET_COMMANDS):
+        with tarfile.open(archive_path, "r:gz") as archive:
+            archive.extractall(raw_root)
 
-    return extracted_dir
+    return raw_root
 
 
 def copy_target_classes(source_dir: Path, output_dir: Path, commands: list[str]) -> None:
@@ -37,6 +38,25 @@ def copy_target_classes(source_dir: Path, output_dir: Path, commands: list[str])
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+
+    for split_file in SPLIT_FILES:
+        source_list = source_dir / split_file
+        if not source_list.exists():
+            raise FileNotFoundError(f"Missing official split file: {source_list}")
+
+        selected = []
+        for line in source_list.read_text(encoding="utf-8").splitlines():
+            relative_path = Path(line.strip())
+            if relative_path.parts and relative_path.parts[0] in commands:
+                selected.append(line)
+        (output_dir / split_file).write_text("\n".join(selected) + "\n", encoding="utf-8")
+
+    noise_source = source_dir / "_background_noise_"
+    if noise_source.exists():
+        noise_destination = output_dir / "_background_noise_"
+        if noise_destination.exists():
+            shutil.rmtree(noise_destination)
+        shutil.copytree(noise_source, noise_destination)
 
 
 def main() -> None:
