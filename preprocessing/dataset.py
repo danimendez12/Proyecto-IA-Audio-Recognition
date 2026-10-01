@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torchaudio
@@ -45,6 +47,34 @@ def _create_mel_transform(sample_rate: int, n_mels: int) -> torchaudio.transform
     )
 
 
+def _load_waveform(wav_path: str | Path) -> tuple[Tensor, int]:
+    """Load a PCM WAV using stdlib, avoiding torchaudio's TorchCodec dependency."""
+    with wave.open(str(wav_path), "rb") as audio:
+        channels = audio.getnchannels()
+        sample_rate = audio.getframerate()
+        sample_width = audio.getsampwidth()
+        frame_count = audio.getnframes()
+        raw_audio = audio.readframes(frame_count)
+
+    if sample_width == 1:
+        samples = np.frombuffer(raw_audio, dtype=np.uint8).astype(np.float32)
+        samples = (samples - 128.0) / 128.0
+    elif sample_width == 2:
+        samples = np.frombuffer(raw_audio, dtype="<i2").astype(np.float32) / 32768.0
+    elif sample_width == 3:
+        packed = np.frombuffer(raw_audio, dtype=np.uint8).reshape(-1, 3)
+        values = packed[:, 0].astype(np.int32) | (packed[:, 1].astype(np.int32) << 8) | (packed[:, 2].astype(np.int32) << 16)
+        values = np.where(values & 0x800000, values - 0x1000000, values)
+        samples = values.astype(np.float32) / 8388608.0
+    elif sample_width == 4:
+        samples = np.frombuffer(raw_audio, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported WAV sample width ({sample_width} bytes): {wav_path}")
+
+    waveform = torch.from_numpy(samples.reshape(-1, channels).T.copy())
+    return waveform, sample_rate
+
+
 def _wav_files(data_dir: Path) -> list[Path]:
     files: list[Path] = []
     for label in LABELS:
@@ -66,7 +96,7 @@ def _official_splits(data_dir: Path) -> dict[str, str]:
 
 
 def _mel_spectrogram(wav_path: Path, transform: torchaudio.transforms.MelSpectrogram, sample_rate: int) -> Tensor:
-    waveform, wav_sample_rate = torchaudio.load(wav_path)
+    waveform, wav_sample_rate = _load_waveform(wav_path)
     if wav_sample_rate != sample_rate:
         waveform = torchaudio.functional.resample(waveform, wav_sample_rate, sample_rate)
     waveform = _fix_length(waveform)

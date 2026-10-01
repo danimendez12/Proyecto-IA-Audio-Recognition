@@ -30,7 +30,7 @@ def _args_for_run(base: argparse.Namespace, mode: str, experiment: dict[str, Any
 
 
 def main() -> None:
-    """Run the same three configurations for base and augmented data."""
+    """Run the selected three-experiment group and update the shared summary."""
     parser = argparse.ArgumentParser(description="Run six Model B experiments")
     parser.add_argument("--data-dir", type=Path, default=Path("./data/speech_commands_10"))
     parser.add_argument("--cache-dir", type=Path, default=Path("./data/spectrogram_cache"))
@@ -41,6 +41,12 @@ def main() -> None:
     parser.add_argument("--wandb-project", type=str, default="speech-commands-10")
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="online")
     parser.add_argument("--noise-dir", type=Path, default=None)
+    parser.add_argument(
+        "--mode",
+        choices=["base", "augmented", "all"],
+        default="all",
+        help="Experiment group to run; use base and augmented in separate invocations to split the workload",
+    )
     args = parser.parse_args()
 
     common = {
@@ -67,7 +73,8 @@ def main() -> None:
         "use_time_stretch": False,
     }
     results: list[dict[str, Any]] = []
-    for mode in ("base", "augmented"):
+    modes = ("base", "augmented") if args.mode == "all" else (args.mode,)
+    for mode in modes:
         for experiment in EXPERIMENTS:
             run_args = _args_for_run(SimpleNamespace(**{**common, "checkpoint_root": args.checkpoint_root}), mode, experiment)
             results.append(train(run_args))
@@ -76,28 +83,40 @@ def main() -> None:
     results_dir.mkdir(parents=True, exist_ok=True)
     summary_path = results_dir / "summary.csv"
     fields = ["mode", "experiment", "learning_rate", "width_mult", "dropout", "batch_size", "weight_decay", "best_val_f1", "test_accuracy", "test_f1", "gap", "parameters"]
+    existing_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    if summary_path.exists():
+        with summary_path.open(newline="", encoding="utf-8") as file:
+            for row in csv.DictReader(file):
+                existing_rows[(row["mode"], row["experiment"])] = row
+
+    for result in results:
+        config = result["config"]
+        mode = "augmented" if result["mode"] == "full" else "base"
+        existing_rows[(mode, config["name"])] = {
+            "mode": mode,
+            "experiment": config["name"],
+            "learning_rate": config["learning_rate"],
+            "width_mult": config["width_mult"],
+            "dropout": config["dropout"],
+            "batch_size": config["batch_size"],
+            "weight_decay": config["weight_decay"],
+            "best_val_f1": result["best_val_f1"],
+            "test_accuracy": result["test_accuracy"],
+            "test_f1": result["test_f1"],
+            "gap": result["gap"],
+            "parameters": result["parameters"],
+        }
+
     with summary_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
-        for result in results:
-            config = result["config"]
-            writer.writerow({
-                "mode": "augmented" if result["mode"] == "full" else "base",
-                "experiment": config["name"],
-                "learning_rate": config["learning_rate"],
-                "width_mult": config["width_mult"],
-                "dropout": config["dropout"],
-                "batch_size": config["batch_size"],
-                "weight_decay": config["weight_decay"],
-                "best_val_f1": result["best_val_f1"],
-                "test_accuracy": result["test_accuracy"],
-                "test_f1": result["test_f1"],
-                "gap": result["gap"],
-                "parameters": result["parameters"],
-            })
+        for row in existing_rows.values():
+            writer.writerow(row)
 
     summary_run = wandb.init(project=args.wandb_project, job_type="summary", mode=args.wandb_mode, tags=["comparison"])
-    summary_run.log({"experiments/summary": wandb.Table(data=[list(row.values()) for row in csv.DictReader(summary_path.open(encoding="utf-8"))], columns=fields)})
+    with summary_path.open(newline="", encoding="utf-8") as file:
+        summary_rows = list(csv.DictReader(file))
+    summary_run.log({"experiments/summary": wandb.Table(data=[list(row[field] for field in fields) for row in summary_rows], columns=fields)})
     summary_run.finish()
     print(f"Summary written to {summary_path.resolve()}")
 

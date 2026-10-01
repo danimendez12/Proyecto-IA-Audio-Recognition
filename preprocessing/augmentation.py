@@ -9,7 +9,7 @@ import torchaudio
 from torch import Tensor, nn
 from torch.utils.data import Dataset
 
-from .dataset import CLIP_SAMPLES, SAMPLE_RATE, MelSpectrogramDataset, _create_mel_transform, _fix_length
+from .dataset import CLIP_SAMPLES, SAMPLE_RATE, MelSpectrogramDataset, _create_mel_transform, _fix_length, _load_waveform
 
 
 class SpecAugment(nn.Module):
@@ -106,7 +106,7 @@ class WaveformAugmentedDataset(Dataset[tuple[Tensor, int]]):
             raise FileNotFoundError(f"Noise directory not found: {noise_path}")
         waveforms: list[Tensor] = []
         for path in sorted(noise_path.glob("*.wav")):
-            waveform, sample_rate = torchaudio.load(path)
+            waveform, sample_rate = _load_waveform(path)
             if sample_rate != SAMPLE_RATE:
                 waveform = torchaudio.functional.resample(waveform, sample_rate, SAMPLE_RATE)
             waveforms.append(waveform.mean(dim=0, keepdim=True))
@@ -173,7 +173,7 @@ class WaveformAugmentedDataset(Dataset[tuple[Tensor, int]]):
         if torch.rand(()) > self.p_augment:
             return self.dataset[item_index]
 
-        waveform, source_rate = torchaudio.load(self._source_path(item_index))
+        waveform, source_rate = _load_waveform(self._source_path(item_index))
         if source_rate != self.sample_rate:
             waveform = torchaudio.functional.resample(waveform, source_rate, self.sample_rate)
         waveform = waveform.mean(dim=0, keepdim=True)

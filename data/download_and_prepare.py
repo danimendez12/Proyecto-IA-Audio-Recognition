@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
+import ssl
 import tarfile
 import urllib.request
+from urllib.error import URLError
 from pathlib import Path
 
 DATASET_URL = "https://download.tensorflow.org/data/speech_commands_v0.02.tar.gz"
@@ -12,12 +15,28 @@ TARGET_COMMANDS = ["yes", "no", "up", "down", "left", "right", "on", "off", "sto
 SPLIT_FILES = ("validation_list.txt", "testing_list.txt")
 
 
-def download_speech_commands(raw_root: Path) -> Path:
+def download_speech_commands(raw_root: Path, insecure: bool = False) -> Path:
+    """Download and extract Speech Commands, optionally bypassing TLS checks."""
     raw_root.mkdir(parents=True, exist_ok=True)
     archive_path = raw_root / ARCHIVE_NAME
 
     if not archive_path.exists():
-        urllib.request.urlretrieve(DATASET_URL, archive_path)
+        context = ssl._create_unverified_context() if insecure else ssl.create_default_context()
+        temporary_path = archive_path.with_suffix(archive_path.suffix + ".part")
+        try:
+            with contextlib.closing(urllib.request.urlopen(DATASET_URL, context=context)) as response:
+                with temporary_path.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+            temporary_path.replace(archive_path)
+        except URLError as error:
+            temporary_path.unlink(missing_ok=True)
+            if not insecure:
+                raise RuntimeError(
+                    "Could not verify the dataset server certificate. "
+                    "Fix the local proxy/CA configuration or retry with --insecure-download "
+                    "on a trusted network."
+                ) from error
+            raise
 
     if not all((raw_root / command).is_dir() for command in TARGET_COMMANDS):
         with tarfile.open(archive_path, "r:gz") as archive:
@@ -68,9 +87,14 @@ def main() -> None:
         default=Path("./data/speech_commands_10"),
         help="Destination directory for filtered classes",
     )
+    parser.add_argument(
+        "--insecure-download",
+        action="store_true",
+        help="Disable TLS certificate verification for the download only; use only on a trusted network",
+    )
     args = parser.parse_args()
 
-    source_dir = download_speech_commands(args.root)
+    source_dir = download_speech_commands(args.root, insecure=args.insecure_download)
     copy_target_classes(source_dir, args.output_dir, TARGET_COMMANDS)
 
     print(f"Prepared 10-class dataset at: {args.output_dir.resolve()}")

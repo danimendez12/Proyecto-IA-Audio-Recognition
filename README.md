@@ -13,6 +13,16 @@ python -m pip install -r requirements.txt
 python data/download_and_prepare.py --root ./data --output-dir ./data/speech_commands_10
 ```
 
+El archivo original descargado en `data/` contiene más clases, pero el proyecto usa exclusivamente `data/speech_commands_10/`, que queda filtrada a `yes`, `no`, `up`, `down`, `left`, `right`, `on`, `off`, `stop` y `go`.
+
+No es necesario instalar `torchcodec`: la lectura de WAV se realiza con el lector PCM interno del proyecto y `numpy`.
+
+Si tu red presenta un certificado incorrecto para `download.tensorflow.org`, corrige primero la configuración del proxy/CA. Como alternativa temporal en una red de confianza:
+
+```bash
+python data/download_and_prepare.py --root ./data --output-dir ./data/speech_commands_10 --insecure-download
+```
+
 Construir el caché normalizado. La metadata registra el split oficial y la ruta del `.wav` para la augmentación de waveform:
 
 ```bash
@@ -40,6 +50,15 @@ python train.py --augment-mode full --noise-dir ./data/speech_commands_10/_backg
 ## Seis experimentos
 
 Las mismas tres configuraciones se ejecutan para `base` y `augmented`. Cada run escribe `checkpoints/<run_name>/best_model.pt`; el resumen se guarda en `results/summary.csv` y como `wandb.Table`.
+
+Para no ejecutar los seis runs en una sola sesión, divide el trabajo:
+
+```bash
+python run_experiments.py --mode base --wandb-mode online
+python run_experiments.py --mode augmented --wandb-mode online
+```
+
+El archivo `results/summary.csv` se conserva y se completa entre ambas ejecuciones. `--mode all` mantiene la opción de ejecutar los seis runs seguidos.
 
 ```bash
 python run_experiments.py --wandb-mode online

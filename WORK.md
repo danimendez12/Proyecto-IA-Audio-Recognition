@@ -18,6 +18,8 @@ Las dependencias principales son:
 - `wandb`: seguimiento visual de los experimentos.
 - `onnx` y `onnxruntime`: exportación y verificación.
 
+El proyecto no necesita `torchcodec` para leer los WAV: usa un lector PCM interno basado en la librería estándar `wave` y `numpy`, porque las versiones recientes de `torchaudio` pueden convertir `torchaudio.load()` en una llamada obligatoria a TorchCodec.
+
 Comprueba que el intérprete seleccionado por VS Code sea el mismo que utilizas en el terminal:
 
 ```bash
@@ -34,6 +36,17 @@ python data/download_and_prepare.py \
   --root ./data \
   --output-dir ./data/speech_commands_10
 ```
+
+Si aparece `SSL: CERTIFICATE_VERIFY_FAILED` por un proxy o antivirus de la red, primero corrige el certificado/CA local. Como alternativa temporal, solo en una red de confianza, puedes usar:
+
+```bash
+python data/download_and_prepare.py \
+  --root ./data \
+  --output-dir ./data/speech_commands_10 \
+  --insecure-download
+```
+
+La opción desactiva la verificación TLS únicamente durante esta descarga y está desactivada por defecto.
 
 El script realiza estas operaciones:
 
@@ -61,6 +74,8 @@ data/speech_commands_10/
 ├── validation_list.txt
 └── testing_list.txt
 ```
+
+Nota: `data/` es la carpeta de descarga original y puede contener todas las clases de Speech Commands. No la uses directamente para entrenar. La carpeta filtrada correcta es `data/speech_commands_10/`; allí solo aparecen las diez clases del proyecto, además de `_background_noise_`.
 
 Si vuelves a ejecutar el comando, las carpetas de clases y ruido se reemplazan para dejar una preparación limpia.
 
@@ -124,6 +139,8 @@ python train.py --augment-mode full --seed 42 ...
 ## 5. Entrenar un modelo base
 
 Entrenamiento sin aumento:
+
+APY KEY: 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
 
 ```bash
 python train.py \
@@ -311,6 +328,33 @@ La red espera entradas con shape:
 ## 10. Ejecutar los seis experimentos
 
 El runner usa las tres configuraciones de `configs/experiments.py` tanto para base como para augmented:
+
+Puedes dividir el trabajo en dos ejecuciones. Primero ejecuta los tres modelos base:
+
+```bash
+python run_experiments.py \
+  --mode base \
+  --data-dir ./data/speech_commands_10 \
+  --cache-dir ./data/spectrogram_cache \
+  --epochs 20 \
+  --seed 42 \
+  --wandb-mode online
+```
+
+Cuando termine, ejecuta los tres modelos aumentados:
+
+```bash
+python run_experiments.py \
+  --mode augmented \
+  --data-dir ./data/speech_commands_10 \
+  --cache-dir ./data/spectrogram_cache \
+  --noise-dir ./data/speech_commands_10/_background_noise_ \
+  --epochs 20 \
+  --seed 42 \
+  --wandb-mode online
+```
+
+La opción `--mode all` conserva el comportamiento anterior y ejecuta los seis seguidos. `results/summary.csv` se actualiza acumulativamente, por lo que la segunda ejecución conserva las tres filas base y añade las tres augmented.
 
 ```bash
 python run_experiments.py \
